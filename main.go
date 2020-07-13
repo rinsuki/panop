@@ -26,10 +26,10 @@ func ipFromAddr(addr net.Addr) net.IP {
 }
 
 type Config struct {
-	Upstream []string                     `yaml:"upstream"`
-	NXDomain []string                     `yaml:"nxdomain"`
-	Redirect map[string][]string          `yaml:"redirect"`
-	Dynamic  map[string]map[string]string `yaml:"direct"`
+	Upstream []string            `yaml:"upstream"`
+	NXDomain []string            `yaml:"nxdomain"`
+	Redirect map[string][]string `yaml:"redirect"`
+	Const    map[string][]net.IP `yaml:"const"`
 }
 
 func main() {
@@ -45,6 +45,46 @@ func main() {
 
 	udpServer := dns.Server{Addr: "0.0.0.0:53", Net: "udp"}
 	tcpServer := dns.Server{Addr: "0.0.0.0:53", Net: "tcp"}
+
+	resolveWithConst := func(req *dns.Msg) (*dns.Msg, bool, error) {
+		// const判定
+		question := req.Question[0]
+		checkConst := question.Qtype == dns.TypeA || question.Qtype == dns.TypeAAAA
+		if checkConst {
+			for domain, ips := range config.Const {
+				domain = domain + "."
+				if question.Name == domain {
+					msg := new(dns.Msg)
+					msg.SetReply(req)
+					msg.Authoritative = true
+					answers := []dns.RR{}
+					for _, ip := range ips {
+						if ip.To4() != nil {
+							if question.Qtype == dns.TypeA {
+								a := new(dns.A)
+								a.A = ip
+								a.Hdr = dns.RR_Header{Name: domain, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0}
+								answers = append(answers, a)
+							}
+						} else {
+							if question.Qtype == dns.TypeAAAA {
+								aaaa := new(dns.AAAA)
+								aaaa.AAAA = ip
+								aaaa.Hdr = dns.RR_Header{Name: domain, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 0}
+								answers = append(answers, aaaa)
+							}
+						}
+					}
+					msg.Answer = answers
+					return msg, true, nil
+				}
+			}
+		}
+		// constじゃなかったバージョン
+		res, _, err := client.Exchange(req, config.Upstream[0])
+		return res, false, err
+	}
+
 	dns.HandleFunc(".", func(writer dns.ResponseWriter, req *dns.Msg) {
 		if len(req.Question) != 1 {
 			log.Fatalln(req.Question)
@@ -82,10 +122,17 @@ func main() {
 				}
 			}
 		}
-		if !isRedirect { // redirect の場合もうログ出力はしてあるのでもう書かなくてよい
-			log.Printf("[PASS]\t%s\t%s\n", writer.RemoteAddr().String(), req.Question[0].String())
+		res, isConst, err := resolveWithConst(req)
+		if err != nil {
+			panic(err)
 		}
-		res, _, err := client.Exchange(req, config.Upstream[0])
+		if !isRedirect { // redirect の場合もうログ出力はしてあるのでもう書かなくてよい
+			if isConst {
+				log.Printf(colorstring.Color("[green][CONST]\t%s\t%s"), writer.RemoteAddr().String(), req.Question[0].String())
+			} else {
+				log.Printf("[PASS]\t%s\t%s", writer.RemoteAddr().String(), req.Question[0].String())
+			}
+		}
 		for i, question := range res.Question {
 			if question.Name == replacedName {
 				res.Question[i].Name = origName
@@ -103,28 +150,30 @@ func main() {
 		}
 		writer.WriteMsg(res)
 	})
-	dns.HandleFunc("internal.", func(writer dns.ResponseWriter, req *dns.Msg) {
-		domain := req.Question[0].Name
-		msg := new(dns.Msg)
-		msg.SetReply(req)
-		msg.Authoritative = true
-		pp.Println(writer.RemoteAddr().String())
-		ip := ipFromAddr(writer.RemoteAddr())
-		answers := []dns.RR{}
-		if ip.To4() != nil {
-			a := new(dns.A)
-			a.A = ip
-			a.Hdr = dns.RR_Header{Name: domain, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0}
-			answers = append(answers, a)
-		} else {
-			aaaa := new(dns.AAAA)
-			aaaa.AAAA = ip
-			aaaa.Hdr = dns.RR_Header{Name: domain, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 0}
-			answers = append(answers, aaaa)
-		}
-		msg.Answer = answers
-		writer.WriteMsg(msg)
-	})
+	if false {
+		dns.HandleFunc("internal.", func(writer dns.ResponseWriter, req *dns.Msg) {
+			domain := req.Question[0].Name
+			msg := new(dns.Msg)
+			msg.SetReply(req)
+			msg.Authoritative = true
+			pp.Println(writer.RemoteAddr().String())
+			ip := ipFromAddr(writer.RemoteAddr())
+			answers := []dns.RR{}
+			if ip.To4() != nil {
+				a := new(dns.A)
+				a.A = ip
+				a.Hdr = dns.RR_Header{Name: domain, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0}
+				answers = append(answers, a)
+			} else {
+				aaaa := new(dns.AAAA)
+				aaaa.AAAA = ip
+				aaaa.Hdr = dns.RR_Header{Name: domain, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 0}
+				answers = append(answers, aaaa)
+			}
+			msg.Answer = answers
+			writer.WriteMsg(msg)
+		})
+	}
 
 	go func() {
 		err := udpServer.ListenAndServe()
