@@ -6,5 +6,8 @@ RUN go mod download
 COPY *.go .
 RUN go build -o /panop
 
+EXPOSE 53
+EXPOSE 53/udp
+
 WORKDIR /
 CMD ["/panop"]
