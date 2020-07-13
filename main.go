@@ -68,10 +68,38 @@ func main() {
 				return
 			}
 		}
-		log.Printf("[PASS]\t%s\t%s\n", writer.RemoteAddr().String(), req.Question[0].String())
+		// redirect判定
+		isRedirect := false
+		origName := question.Name
+		replacedName := ""
+		for dest, domains := range config.Redirect {
+			for _, domain := range domains {
+				if strings.HasSuffix(question.Name, domain+".") {
+					log.Printf(colorstring.Color("[yellow][REDIR]\t%s\t%s\t%s"), writer.RemoteAddr().String(), question.String(), dest)
+					question.Name = dest + "."
+					replacedName = dest + "."
+					isRedirect = true
+				}
+			}
+		}
+		if !isRedirect { // redirect の場合もうログ出力はしてあるのでもう書かなくてよい
+			log.Printf("[PASS]\t%s\t%s\n", writer.RemoteAddr().String(), req.Question[0].String())
+		}
 		res, _, err := client.Exchange(req, config.Upstream[0])
+		for i, question := range res.Question {
+			if question.Name == replacedName {
+				res.Question[i].Name = origName
+			}
+		}
 		if err != nil {
 			log.Fatalln(err)
+		}
+		for i, answer := range res.Answer {
+			// TODO: CNAME 除去したほうがいいかも
+			if isRedirect && answer.Header().Name == replacedName {
+				answer.Header().Name = origName
+				res.Answer[i] = answer
+			}
 		}
 		writer.WriteMsg(res)
 	})
