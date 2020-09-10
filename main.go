@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
@@ -124,6 +126,10 @@ func main() {
 		}
 		res, isConst, err := resolveWithConst(req)
 		if err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) { // タイムアウトはだまっとく
+				fmt.Printf("[NOT CRITICAL ERROR]\t%s\n", err.Error())
+				return
+			}
 			panic(err)
 		}
 		if !isRedirect { // redirect の場合もうログ出力はしてあるのでもう書かなくてよい
