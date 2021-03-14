@@ -154,6 +154,11 @@ func main() {
 				res.Answer[i] = answer
 			}
 		}
+		// iOS14 の mDNSResponder は返答がありすぎてIPフラグメンテーションが起きると壊れるっぽい
+		// のでめっちゃ(とりあえず10個)answerがあったら適当に削っておく
+		if len(res.Answer) > 10 {
+			res.Answer = res.Answer[:10]
+		}
 		writer.WriteMsg(res)
 	})
 	if false {
