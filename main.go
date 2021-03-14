@@ -43,12 +43,15 @@ func main() {
 	if err := yaml.Unmarshal(configBytes, &config); err != nil {
 		panic(err)
 	}
-	client := new(dns.Client)
+	udpClient := new(dns.Client)
+	udpClient.Net = "udp"
+	tcpClient := new(dns.Client)
+	tcpClient.Net = "tcp"
 
 	udpServer := dns.Server{Addr: "0.0.0.0:53", Net: "udp"}
 	tcpServer := dns.Server{Addr: "0.0.0.0:53", Net: "tcp"}
 
-	resolveWithConst := func(req *dns.Msg) (*dns.Msg, bool, error) {
+	resolveWithConst := func(req *dns.Msg, net string) (*dns.Msg, bool, error) {
 		// const判定
 		question := req.Question[0]
 		checkConst := question.Qtype == dns.TypeA || question.Qtype == dns.TypeAAAA
@@ -83,6 +86,10 @@ func main() {
 			}
 		}
 		// constじゃなかったバージョン
+		client := udpClient
+		if strings.HasPrefix(net, "tcp") {
+			client = tcpClient
+		}
 		res, _, err := client.Exchange(req, config.Upstream[0])
 		return res, false, err
 	}
@@ -124,7 +131,7 @@ func main() {
 				}
 			}
 		}
-		res, isConst, err := resolveWithConst(req)
+		res, isConst, err := resolveWithConst(req, writer.RemoteAddr().Network())
 		if err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) { // タイムアウトはだまっとく
 				fmt.Printf("[NOT CRITICAL ERROR]\t%s\n", err.Error())
